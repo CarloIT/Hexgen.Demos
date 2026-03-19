@@ -1,2 +1,2 @@
 # Hexgen.Demos
-一些日常使用的Demo源码
+日常随手积累的Demo源码，不确保可用性。

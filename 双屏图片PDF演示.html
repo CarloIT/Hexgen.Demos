@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vue 双屏图片/PDF演示</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background-color: #f5f5f5;
+    }
+
+    .btn {
+      padding: 12px 24px;
+      font-size: 16px;
+      background-color: #42b983;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      margin: 0 8px;
+    }
+
+    .btn:hover {
+      background-color: #359469;
+    }
+
+    .btn:disabled {
+      background-color: #999;
+      cursor: not-allowed;
+    }
+
+    .screen-info {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      background: white;
+      padding: 10px;
+      border-radius: 4px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      font-size: 14px;
+      color: #333;
+    }
+
+    .control-panel {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .file-status {
+      margin: 0 15px;
+      font-size: 16px;
+      color: #333;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app">
+    <!-- 显示当前屏幕信息，方便调试 -->
+    <div class="screen-info">
+      当前屏幕: 宽度 {{ screenWidth }}px, 高度 {{ screenHeight }}px<br>
+      可用区域: 左 {{ screenLeft }}px, 上 {{ screenTop }}px
+    </div>
+
+    <!-- 控制面板：新增上一张/下一张按钮 + 状态显示 -->
+    <div class="control-panel">
+      <button class="btn" @click="prevFile" :disabled="!isWindowOpen">上一张</button>
+      <button class="btn" @click="openFileInSecondScreen" :disabled="isWindowOpen">
+        {{ isWindowOpen ? '新窗口已打开' : '打开文件并每隔5秒切换' }}
+      </button>
+      <button class="btn" @click="nextFile" :disabled="!isWindowOpen">下一张</button>
+
+      <!-- 显示当前播放状态 -->
+      <div class="file-status" v-if="isWindowOpen">
+        当前: {{ currentFileIndex + 1 }}/{{ fileList.length }} ({{ fileList[currentFileIndex].type.toUpperCase() }})
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { createApp } = Vue;
+
+    createApp({
+      data() {
+        return {
+          isWindowOpen: false,
+          newWindowRef: null,
+          // 存储定时器ID，用于停止循环
+          fileSwitchInterval: null,
+          // 窗口检查定时器
+          windowCheckTimer: null,
+          // 屏幕信息（用于调试显示）
+          screenWidth: window.screen.width,
+          screenHeight: window.screen.height,
+          screenLeft: window.screen.left,
+          screenTop: window.screen.top,
+          // 混合文件池：包含类型(type)和地址(url)
+          fileList: [
+            { type: 'img', url: 'https://picsum.photos/1920/1080?random=1' },
+            { type: 'img', url: 'https://picsum.photos/1920/1080?random=2' },
+            { type: 'pdf', url: 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf' }, // 示例PDF
+            { type: 'img', url: 'https://picsum.photos/1920/1080?random=3' },
+            { type: 'pdf', url: 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf' }, // 示例PDF
+          ],
+          currentFileIndex: 0 // 当前显示的文件索引
+        };
+      },
+      methods: {
+        openFileInSecondScreen() {
+          if (this.isWindowOpen) return;
+          this.isWindowOpen = true;
+
+          // 多屏坐标计算逻辑
+          const windowWidth = 1902;
+          const windowHeight = 1080;
+          let targetX, targetY;
+
+          if (window.screen.left !== 0) {
+            targetX = window.screen.left + 50;
+            targetY = window.screen.top + 50;
+          } else {
+            const mainScreenRight = window.screen.left + window.screen.width;
+            targetX = mainScreenRight;
+            targetY = window.screen.top;
+          }
+
+          try {
+            this.newWindowRef = window.open(
+              '',
+              '_blank',
+              `width=${windowWidth},height=${windowHeight},left=${targetX},top=${targetY}`
+            );
+
+            if (!this.newWindowRef) {
+              alert('新窗口被浏览器拦截，请允许当前页面的弹窗权限！');
+              this.isWindowOpen = false;
+              return;
+            }
+
+            // 关键修复1：在窗口创建后立即绑定关闭监听（不受document.write影响）
+            this.bindWindowCloseListener();
+
+            // 初始渲染第一个文件
+            this.renderCurrentFile();
+
+            // 每隔5秒切换文件
+            this.fileSwitchInterval = setInterval(() => {
+              // 关键修复2：每次定时器执行时先检查窗口状态
+              if (!this.newWindowRef || this.newWindowRef.closed) {
+                this.stopFileSwitch();
+                this.isWindowOpen = false;
+                return;
+              }
+
+              // 切换到下一个文件，索引循环
+              this.currentFileIndex = (this.currentFileIndex + 1) % this.fileList.length;
+              this.renderCurrentFile();
+            }, 5000); // 每隔5秒执行一次
+
+          } catch (error) {
+            console.error('操作失败：', error);
+            alert('操作失败，请检查控制台日志！');
+            this.stopFileSwitch();
+            this.isWindowOpen = false;
+          }
+        },
+        // 新增：上一张按钮逻辑
+        prevFile() {
+          if (!this.isWindowOpen || !this.newWindowRef || this.newWindowRef.closed) return;
+
+          // 索引向前循环（到0时切到最后一张）
+          this.currentFileIndex = (this.currentFileIndex - 1 + this.fileList.length) % this.fileList.length;
+          this.renderCurrentFile();
+
+          // 重置自动轮播定时器（手动切换后重新计时）
+          this.resetInterval();
+        },
+        // 新增：下一张按钮逻辑
+        nextFile() {
+          if (!this.isWindowOpen || !this.newWindowRef || this.newWindowRef.closed) return;
+
+          // 索引向后循环
+          this.currentFileIndex = (this.currentFileIndex + 1) % this.fileList.length;
+          this.renderCurrentFile();
+
+          // 重置自动轮播定时器（手动切换后重新计时）
+          this.resetInterval();
+        },
+        // 新增：重置自动轮播定时器
+        resetInterval() {
+          if (this.fileSwitchInterval) {
+            clearInterval(this.fileSwitchInterval);
+          }
+          // 重新启动定时器，保证手动切换后依然5秒自动切换
+          this.fileSwitchInterval = setInterval(() => {
+            if (!this.newWindowRef || this.newWindowRef.closed) {
+              this.stopFileSwitch();
+              this.isWindowOpen = false;
+              return;
+            }
+            this.currentFileIndex = (this.currentFileIndex + 1) % this.fileList.length;
+            this.renderCurrentFile();
+          }, 5000);
+        },
+        // 关键修复3：独立的窗口关闭监听绑定方法
+        bindWindowCloseListener() {
+          // 保存Vue实例上下文
+          const vm = this;
+
+          // 使用原生事件监听，避免被document.write覆盖
+          this.newWindowRef.addEventListener('beforeunload', function () {
+            vm.stopFileSwitch();
+            vm.isWindowOpen = false;
+            vm.newWindowRef = null;
+          });
+
+          // 额外的轮询检查（兜底方案）
+          this.windowCheckTimer = setInterval(() => {
+            if (vm.newWindowRef && vm.newWindowRef.closed) {
+              clearInterval(vm.windowCheckTimer);
+              vm.stopFileSwitch();
+              vm.isWindowOpen = false;
+              vm.newWindowRef = null;
+            }
+          }, 500);
+        },
+        // 渲染当前索引的文件
+        renderCurrentFile() {
+          const currentFile = this.fileList[this.currentFileIndex];
+          const fileType = currentFile.type;
+          const fileUrl = currentFile.url;
+
+          // 根据文件类型生成不同的HTML内容
+          let contentHtml = '';
+          if (fileType === 'img') {
+            contentHtml = `<img id="dynamicFile" src="${fileUrl}" alt="图片展示" style="max-width: 100%; max-height: 100%; border-radius: 4px; transition: opacity 0.5s ease;">`;
+          } else if (fileType === 'pdf') {
+            // 使用iframe展示PDF（浏览器原生支持）
+            contentHtml = `<iframe id="dynamicFile" src="${fileUrl}" style="width: 100%; height: 100%; border: none; transition: opacity 0.5s ease;" frameborder="0"></iframe>`;
+          }
+
+          // 写入完整HTML结构
+          this.newWindowRef.document.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <title>文件展示</title>
+              <style>
+                body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #fff; }
+                .tip { position: fixed; top: 20px; left: 20px; color: #666; font-size: 14px; }
+                .screen-pos { position: fixed; bottom: 20px; left: 20px; color: #999; font-size: 12px; }
+                .file-info { position: fixed; top: 20px; right: 20px; color: #999; font-size: 12px; }
+              </style>
+            </head>
+            <body>
+              <div class="tip">每隔5秒自动切换文件（可在主屏手动切换）...</div>
+              <div class="screen-pos">窗口坐标: X=${this.newWindowRef.screenLeft}, Y=${this.newWindowRef.screenTop}</div>
+              <div class="file-info">当前文件: ${this.currentFileIndex + 1}/${this.fileList.length} (${fileType.toUpperCase()})</div>
+              ${contentHtml}
+            </body>
+            </html>
+          `);
+          this.newWindowRef.document.close();
+
+          // 给文件元素添加加载状态提示
+          const fileElement = this.newWindowRef.document.getElementById('dynamicFile');
+          if (fileElement) {
+            // 加载中提示
+            this.newWindowRef.document.querySelector('.tip').textContent = `正在加载${fileType}文件...`;
+
+            // 加载完成回调
+            fileElement.onload = () => {
+              this.newWindowRef.document.querySelector('.tip').textContent = '加载完成，5秒后继续切换（可在主屏手动切换）...';
+            };
+
+            // 加载失败处理
+            fileElement.onerror = () => {
+              alert(`${fileType.toUpperCase()}文件加载失败，请检查URL是否有效！`);
+              this.stopFileSwitch();
+              this.isWindowOpen = false; // 加载失败也重置状态
+            };
+          }
+        },
+        // 停止文件切换
+        stopFileSwitch() {
+          if (this.fileSwitchInterval) {
+            clearInterval(this.fileSwitchInterval);
+            this.fileSwitchInterval = null;
+          }
+          // 清理窗口检查定时器
+          if (this.windowCheckTimer) {
+            clearInterval(this.windowCheckTimer);
+            this.windowCheckTimer = null;
+          }
+          this.currentFileIndex = 0; // 重置索引
+        }
+      },
+      // 页面卸载时清理定时器和窗口
+      unmounted() {
+        this.stopFileSwitch();
+        if (this.newWindowRef && !this.newWindowRef.closed) {
+          this.newWindowRef.close();
+        }
+        this.isWindowOpen = false; // 卸载时确保状态重置
+      }
+    }).mount('#app');
+  </script>
+</body>
+
+</html>

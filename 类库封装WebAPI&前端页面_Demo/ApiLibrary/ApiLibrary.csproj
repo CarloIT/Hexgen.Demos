@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+	  <IsAotCompatible>False</IsAotCompatible>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+	  <IsAotCompatible>False</IsAotCompatible>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.AspNetCore.Mvc.Core" Version="2.3.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- 将wwwroot目录设置为嵌入式资源（“\**\*”表示包括目录下所有子级） -->
+		<EmbeddedResource Include="wwwroot\**\*" />
+	</ItemGroup>
+
+</Project>
